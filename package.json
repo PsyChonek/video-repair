@@ -1,0 +1,23 @@
+{
+  "name": "video-repair",
+  "version": "0.1.0",
+  "description": "Free repair tool for truncated dashcam MP4 recordings (missing moov atom)",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "video-repair": "src/cli.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "repair": "node src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
