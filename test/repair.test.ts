@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { fourcc, u32be } from '../src/core/bytes.ts';
 import { parseSps } from '../src/core/h264.ts';
 import { memoryReader } from '../src/core/reader.ts';
-import { aacLcConfig, planRepair } from '../src/core/repair.ts';
+import { aacLcConfig, planRepair, RepairError } from '../src/core/repair.ts';
 import { buildFixture, SPS, type FixtureItem } from './fixture.ts';
 
 /** Concatenates the plan into the output file, as the CLI and browser do. */
@@ -133,7 +133,7 @@ test('builds AAC-LC AudioSpecificConfig', () => {
 
 test('falls back to a video-only scan when there is no camera index', async () => {
   const fx = buildFixture({ seconds: 3, tailFrames: 3 });
-  const plan = await planRepair(memoryReader(fx.data), { forceScan: true });
+  const plan = await planRepair(memoryReader(fx.data), { mode: 'scan' });
   const expected = ofKind([...fx.indexed, ...fx.tail], 'video');
   assert.equal(plan.report.method, 'scan');
   assert.ok(plan.report.warnings.includes('no-index-video-only'));
@@ -151,4 +151,23 @@ test('cachedReader returns the same bytes as the underlying reader', async () =>
   for (const [offset, length] of [[0, 5], [250, 20], [255, 2], [9_990, 50], [1_000, 600], [512, 256]] as const) {
     assert.deepEqual(await cached.read(offset, length), data.subarray(offset, Math.min(offset + length, data.length)));
   }
+});
+
+test('index mode refuses a file without a camera index', async () => {
+  const fx = buildFixture({ seconds: 1 });
+  const noIndex = fx.data.slice();
+  // Break every nidx signature.
+  for (let i = 0; i + 4 <= noIndex.length; i++) if (noIndex[i] === 0x6e && noIndex[i + 1] === 0x69 && noIndex[i + 2] === 0x64) noIndex[i] = 0x4e;
+  await assert.rejects(planRepair(memoryReader(noIndex), { mode: 'index' }), (e: unknown) => e instanceof RepairError && e.code === 'no-camera-index');
+});
+
+test('options: frame rate override, no audio, no audio sync', async () => {
+  const fx = buildFixture({ seconds: 2 });
+  const plan = await planRepair(memoryReader(fx.data), { fps: 25, audio: false });
+  assert.equal(plan.report.fps, 25);
+  assert.equal(plan.report.audioFrames, 0);
+  assert.equal(traks(render(fx.data, plan)).length, 1);
+  const synced = await planRepair(memoryReader(fx.data), { syncToAudio: false });
+  assert.ok(!synced.report.warnings.includes('timing-from-audio'));
+  assert.equal(synced.report.fps, 30);
 });

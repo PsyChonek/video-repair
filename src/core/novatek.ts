@@ -5,7 +5,7 @@
 // is written, these boxes still let us rebuild the sample tables exactly.
 
 import { fourcc, u32be, u32le, u64le } from './bytes.ts';
-import { splitAnnexB } from './h264.ts';
+import { splitAnnexB } from './bits.ts';
 import type { Reader } from './reader.ts';
 import type { Sample } from './types.ts';
 

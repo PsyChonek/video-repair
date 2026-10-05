@@ -9,13 +9,19 @@ export interface VideoSample extends Sample {
 }
 
 export interface VideoTrack {
-  codec: 'avc1';
+  sampleEntry: 'avc1' | 'hvc1';
+  configBox: 'avcC' | 'hvcC';
+  /** avcC or hvcC payload. */
+  config: Uint8Array;
   width: number;
   height: number;
   timescale: number;
   sampleDelta: number;
-  avcC: Uint8Array;
   samples: VideoSample[];
+  /** Per-sample presentation minus decode position, in frames, already shifted to be >= 0 (B-frames). */
+  compositionOffsets?: number[];
+  /** Frames to skip at the start so the first presented frame shows at time 0. */
+  presentationDelay?: number;
 }
 
 export interface AudioTrack {

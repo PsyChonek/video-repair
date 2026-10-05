@@ -5,16 +5,23 @@ import { parse } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { parseArgs } from 'node:util';
 import type { Reader } from './core/reader.ts';
-import { planRepair, RepairError } from './core/repair.ts';
+import { planRepair, RepairError, type RepairMode } from './core/repair.ts';
 
-const USAGE = `Usage: video-repair <damaged.mp4> [output.mp4] [--no-tail] [--dry-run]
+const USAGE = `Usage: video-repair <damaged.mp4> [output.mp4] [options]
 
 Rebuilds the index (moov atom) of an MP4 recording that was cut off before it
 was finalized, typically a dashcam that lost power mid-recording.
 
-  --no-tail   skip frames written after the camera's last index entry
-  --scan      ignore the camera index and scan the raw stream (video only)
-  --dry-run   analyze and print the report without writing a file`;
+  --reference <file>  healthy recording from the same camera, for codec settings
+                      (needed for phones, action cams and other files without them)
+  --mode <mode>       auto (default), index (camera index only), scan (data scan, video only)
+  --fps <n>           force the frame rate, e.g. 29.97
+  --no-audio          leave the audio track out
+  --no-tail           skip frames written after the camera's last index entry
+  --no-sync           keep the nominal frame rate even if it disagrees with the audio
+  --dry-run           analyze and print the report without writing a file`;
+
+const MODES = new Set<RepairMode>(['auto', 'index', 'scan']);
 
 async function fileReader(path: string): Promise<Reader & { close(): Promise<void> }> {
   const handle = await open(path, 'r');
@@ -35,9 +42,13 @@ async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
+      reference: { type: 'string' },
+      mode: { type: 'string', default: 'auto' },
+      fps: { type: 'string' },
+      'no-audio': { type: 'boolean', default: false },
       'no-tail': { type: 'boolean', default: false },
+      'no-sync': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
-      scan: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },
   });
@@ -46,15 +57,26 @@ async function main(): Promise<number> {
     console.log(USAGE);
     return input || values.help ? 0 : 1;
   }
+  const mode = values.mode as RepairMode;
+  const fps = values.fps === undefined ? undefined : Number(values.fps);
+  if (!MODES.has(mode) || (fps !== undefined && !(fps > 0 && fps <= 1000))) {
+    console.error(USAGE);
+    return 1;
+  }
   const { dir, name } = parse(input);
   const output = outputArg ?? `${dir ? `${dir}/` : ''}${name}_fixed.mp4`;
 
   const reader = await fileReader(input);
+  const reference = values.reference ? await fileReader(values.reference) : undefined;
   try {
     let lastStage = '';
     const plan = await planRepair(reader, {
+      mode,
+      fps,
+      reference,
       tail: !values['no-tail'],
-      forceScan: values.scan,
+      audio: !values['no-audio'],
+      syncToAudio: !values['no-sync'],
       onProgress: (stage, fraction) => {
         const label = `${stage} ${Math.round(fraction * 100)}%`;
         if (label !== lastStage) process.stderr.write(`\r${label.padEnd(16)}`);
@@ -64,6 +86,7 @@ async function main(): Promise<number> {
     process.stderr.write('\r'.padEnd(17) + '\r');
     const r = plan.report;
     console.log(`Method:      ${r.method === 'nidx' ? `camera index (${r.indexBoxes} index boxes)` : 'structural scan'}`);
+    console.log(`Codec:       ${r.codec === 'hevc' ? 'H.265/HEVC' : 'H.264/AVC'}`);
     console.log(`Video:       ${r.width}x${r.height} @ ${r.fps.toFixed(2)} fps, ${r.videoFrames} frames (${r.keyframes} keyframes)`);
     console.log(`Audio:       ${r.audioFrames ? `${r.audioFrames} AAC frames` : 'none'}`);
     console.log(`Tail:        ${r.tailVideoFrames} video + ${r.tailAudioFrames} audio frames recovered after last index`);
@@ -85,6 +108,7 @@ async function main(): Promise<number> {
     throw err;
   } finally {
     await reader.close();
+    await reference?.close();
   }
 }
 

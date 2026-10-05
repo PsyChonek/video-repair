@@ -2,11 +2,12 @@
 // where the layout learned from the indexed part tells us what to expect.
 
 import { fourcc, u32be } from './bytes.ts';
-import { NAL_IDR, NAL_SLICE, nalType } from './h264.ts';
+import type { VideoCodec } from './codec.ts';
 import type { Reader } from './reader.ts';
 import type { Sample, VideoSample } from './types.ts';
 
 export interface StreamModel {
+  codec: VideoCodec;
   /** First NAL header bytes seen on known-good video samples (e.g. 0x65, 0x21). */
   videoHeaders: Set<number>;
   maxVideoSize: number;
@@ -31,7 +32,6 @@ type Item =
   | { kind: 'skip'; end: number };
 
 const PEEK = 16;
-const NON_VCL = new Set([6, 7, 8, 9, 10, 12]);
 const SKIP_BOXES = new Set(['free', 'skip', 'wide']);
 
 const alignUp = (pos: number, align: number): number => Math.ceil(pos / align) * align;
@@ -50,14 +50,15 @@ export class RawScanner {
   }
 
   private plausibleNal(head: Uint8Array, pos: number): number | null {
+    const { codec } = this.model;
     if (head.length < 6) return null;
     const len = u32be(head, 0);
     const header = head[4]!;
-    if (len < 2 || header & 0x80 || pos + 4 + len > this.reader.size) return null;
-    const type = nalType(header);
-    if (type === NAL_SLICE || type === NAL_IDR) {
+    if (len < 2 || !codec.validHeader(header, head[5]!) || pos + 4 + len > this.reader.size) return null;
+    const type = codec.nalType(header);
+    if (codec.isSlice(type)) {
       if (!this.model.videoHeaders.has(header) || len > this.model.maxVideoSize * 4) return null;
-    } else if (!NON_VCL.has(type) || len > 4096) {
+    } else if (!(codec.isPrefix(type) || codec.isSuffix(type)) || len > 4096) {
       return null;
     }
     return len;
@@ -72,14 +73,17 @@ export class RawScanner {
       const head = await this.peek(cursor);
       const len = this.plausibleNal(head, cursor);
       if (len === null) break;
-      const type = nalType(head[4]!);
-      const vcl = type === NAL_SLICE || type === NAL_IDR;
-      // first_mb_in_slice == 0 is coded as a single 1 bit: that starts a new picture.
-      if (vcl && sawSlice && head[5]! & 0x80) break;
-      if (!vcl && sawSlice) break;
+      const { codec } = this.model;
+      const type = codec.nalType(head[4]!);
+      const vcl = codec.isSlice(type);
+      // The first slice of a picture starts with a 1 bit (first_mb_in_slice == 0
+      // in H.264, first_slice_segment_in_pic_flag in H.265).
+      if (vcl && sawSlice && head[4 + codec.headerBytes]! & 0x80) break;
+      if (!vcl && sawSlice && !codec.isSuffix(type)) break;
+      if (!vcl && !sawSlice && codec.isSuffix(type)) break;
       if (vcl) {
         sawSlice = true;
-        keyframe ||= type === NAL_IDR;
+        keyframe ||= codec.isKeyframe(type);
       }
       cursor += 4 + len;
     }

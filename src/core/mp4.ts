@@ -16,6 +16,9 @@ interface TrackLayout {
   sampleDelta: number;
   samples: Sample[];
   syncSamples?: number[];
+  /** In frames; see VideoTrack.compositionOffsets. */
+  compositionOffsets?: number[];
+  presentationDelay?: number;
   sampleEntry: (w: ByteWriter) => void;
 }
 
@@ -33,8 +36,8 @@ export interface Mp4Header {
   dataEnd: number;
 }
 
-function writeFtyp(w: ByteWriter): void {
-  w.box('ftyp', (b) => b.str('isom').u32(0x200).str('isomiso2avc1mp41'));
+function writeFtyp(w: ByteWriter, video: VideoTrack): void {
+  w.box('ftyp', (b) => b.str('isom').u32(0x200).str('isomiso2').str(video.sampleEntry === 'hvc1' ? 'hvc1' : 'avc1').str('mp41'));
 }
 
 function writeMvhd(w: ByteWriter, duration: number, nextTrackId: number): void {
@@ -58,6 +61,13 @@ function writeTrack(w: ByteWriter, t: TrackLayout, offsets: number[], co64: bool
       for (const m of IDENTITY_MATRIX) b.u32(m);
       b.u32(size.width * 0x10000).u32(size.height * 0x10000);
     });
+    if (t.presentationDelay) {
+      // Skip the B-frame reordering delay so video starts at 0, in sync with audio.
+      const mediaTime = t.presentationDelay * t.sampleDelta;
+      trak.box('edts', (edts) =>
+        edts.fullBox('elst', 0, 0, (b) => b.u32(1).u32(Math.min(movieDuration, UINT32_MAX)).u32(mediaTime).u32(0x10000)),
+      );
+    }
     trak.box('mdia', (mdia) => {
       mdia.fullBox('mdhd', 0, 0, (b) => b.u32(0).u32(0).u32(t.timescale).u32(Math.min(mediaDuration, UINT32_MAX)).u16(0x55c4).u16(0));
       mdia.fullBox('hdlr', 0, 0, (b) => {
@@ -79,6 +89,18 @@ function writeStbl(w: ByteWriter, t: TrackLayout, offsets: number[], co64: boole
     t.sampleEntry(b);
   });
   w.fullBox('stts', 0, 0, (b) => b.u32(1).u32(t.samples.length).u32(t.sampleDelta));
+  if (t.compositionOffsets) {
+    const runs: [number, number][] = [];
+    for (const o of t.compositionOffsets) {
+      const last = runs.at(-1);
+      if (last && last[1] === o) last[0]++;
+      else runs.push([1, o]);
+    }
+    w.fullBox('ctts', 0, 0, (b) => {
+      b.u32(runs.length);
+      for (const [count, o] of runs) b.u32(count).u32(o * t.sampleDelta);
+    });
+  }
   if (t.syncSamples && t.syncSamples.length < t.samples.length) {
     const sync = t.syncSamples;
     w.fullBox('stss', 0, 0, (b) => {
@@ -102,13 +124,13 @@ function writeStbl(w: ByteWriter, t: TrackLayout, offsets: number[], co64: boole
 
 function videoEntry(v: VideoTrack): (w: ByteWriter) => void {
   return (w) =>
-    w.box('avc1', (b) => {
+    w.box(v.sampleEntry, (b) => {
       b.zeros(6).u16(1).zeros(16).u16(v.width).u16(v.height);
       b.u32(0x480000).u32(0x480000).u32(0).u16(1);
       const name = 'video-repair';
       b.u8(name.length).str(name).zeros(31 - name.length);
       b.u16(0x18).u16(0xffff);
-      b.box('avcC', (c) => c.bytes(v.avcC));
+      b.box(v.configBox, (c) => c.bytes(v.config));
     });
 }
 
@@ -139,6 +161,8 @@ function layouts(input: Mp4Input): TrackLayout[] {
       sampleDelta: video.sampleDelta,
       samples: video.samples,
       syncSamples,
+      compositionOffsets: video.compositionOffsets,
+      presentationDelay: video.presentationDelay,
       sampleEntry: videoEntry(video),
     },
   ];
@@ -153,7 +177,7 @@ function writeHeader(input: Mp4Input, shift: number, co64: boolean): Uint8Array 
   const payload = input.dataEnd - input.dataStart;
   const largeMdat = payload + 8 > UINT32_MAX;
   const w = new ByteWriter();
-  writeFtyp(w);
+  writeFtyp(w, input.video);
   const duration = Math.max(...tracks.map((t) => Math.round((t.samples.length * t.sampleDelta * MOVIE_TIMESCALE) / t.timescale)));
   w.box('moov', (moov) => {
     writeMvhd(moov, duration, tracks.length + 1);

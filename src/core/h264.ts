@@ -1,4 +1,5 @@
-import { ByteWriter, u32be } from './bytes.ts';
+import { BitReader, toRbsp } from './bits.ts';
+import { ByteWriter } from './bytes.ts';
 
 export const NAL_SLICE = 1;
 export const NAL_IDR = 5;
@@ -7,84 +8,9 @@ export const NAL_PPS = 8;
 
 export const nalType = (header: number): number => header & 0x1f;
 
-/** Splits an Annex B byte stream (00 00 01 / 00 00 00 01 start codes) into NAL units. */
-export function splitAnnexB(data: Uint8Array): Uint8Array[] {
-  const starts: { at: number; payload: number }[] = [];
-  for (let i = 0; i + 3 <= data.length; i++) {
-    if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 1) {
-      starts.push({ at: i > 0 && data[i - 1] === 0 ? i - 1 : i, payload: i + 3 });
-      i += 2;
-    }
-  }
-  return starts.map((s, k) => {
-    let end = k + 1 < starts.length ? starts[k + 1]!.at : data.length;
-    while (end > s.payload && data[end - 1] === 0) end--;
-    return data.subarray(s.payload, end);
-  });
-}
-
-/**
- * Walks a sample made of 4-byte length-prefixed NAL units. Returns the NAL
- * types, or null when the lengths do not tile the sample. Zero padding after
- * the last NAL is allowed, since some cameras align samples to 4 bytes.
- */
-export function sampleNalTypes(sample: Uint8Array): number[] | null {
-  const types: number[] = [];
-  let pos = 0;
-  while (pos + 5 <= sample.length) {
-    const len = u32be(sample, pos);
-    if (len === 0) break;
-    const header = sample[pos + 4]!;
-    if (header & 0x80 || pos + 4 + len > sample.length) return null;
-    types.push(nalType(header));
-    pos += 4 + len;
-  }
-  for (; pos < sample.length; pos++) if (sample[pos] !== 0) return null;
-  return types.length ? types : null;
-}
-
-/** Removes emulation prevention bytes (00 00 03) so the RBSP can be bit-parsed. */
-function toRbsp(nal: Uint8Array): Uint8Array {
-  const out: number[] = [];
-  for (let i = 0; i < nal.length; i++) {
-    if (i >= 2 && nal[i] === 3 && nal[i - 1] === 0 && nal[i - 2] === 0) continue;
-    out.push(nal[i]!);
-  }
-  return Uint8Array.from(out);
-}
-
-class BitReader {
-  private pos = 0;
-  private readonly data: Uint8Array;
-
-  constructor(data: Uint8Array) {
-    this.data = data;
-  }
-
-  bit(): number {
-    const byte = this.data[this.pos >> 3];
-    if (byte === undefined) throw new Error('SPS ended early');
-    const b = (byte >> (7 - (this.pos & 7))) & 1;
-    this.pos++;
-    return b;
-  }
-
-  bits(n: number): number {
-    let v = 0;
-    for (let i = 0; i < n; i++) v = v * 2 + this.bit();
-    return v;
-  }
-
-  ue(): number {
-    let zeros = 0;
-    while (this.bit() === 0) if (++zeros > 31) throw new Error('Bad Exp-Golomb code');
-    return 2 ** zeros - 1 + this.bits(zeros);
-  }
-
-  se(): number {
-    const v = this.ue();
-    return v & 1 ? (v + 1) / 2 : -v / 2;
-  }
+/** pic_parameter_set_id: the first Exp-Golomb value after the header byte. */
+export function ppsId(nal: Uint8Array): number {
+  return new BitReader(toRbsp(nal.subarray(1, 8))).ue();
 }
 
 /**
@@ -108,6 +34,12 @@ export function isPictureStart(header: number, rbsp: Uint8Array, maxPpsId: numbe
 }
 
 export interface SpsInfo {
+  separateColourPlane: boolean;
+  log2MaxFrameNum: number;
+  frameMbsOnly: boolean;
+  pocType: number;
+  /** Only meaningful for pocType 0. */
+  log2MaxPocLsb: number;
   profileIdc: number;
   constraintFlags: number;
   levelIdc: number;
@@ -136,9 +68,10 @@ export function parseSps(nal: Uint8Array): SpsInfo {
   const levelIdc = r.bits(8);
   r.ue(); // seq_parameter_set_id
   let chromaFormatIdc = 1;
+  let separateColourPlane = false;
   if (HIGH_PROFILES.has(profileIdc)) {
     chromaFormatIdc = r.ue();
-    if (chromaFormatIdc === 3) r.bit(); // separate_colour_plane_flag
+    if (chromaFormatIdc === 3) separateColourPlane = r.bit() === 1;
     r.ue(); // bit_depth_luma_minus8
     r.ue(); // bit_depth_chroma_minus8
     r.bit(); // qpprime_y_zero_transform_bypass_flag
@@ -147,10 +80,11 @@ export function parseSps(nal: Uint8Array): SpsInfo {
       for (let i = 0; i < lists; i++) if (r.bit()) skipScalingList(r, i < 6 ? 16 : 64);
     }
   }
-  r.ue(); // log2_max_frame_num_minus4
+  const log2MaxFrameNum = r.ue() + 4;
   const pocType = r.ue();
+  let log2MaxPocLsb = 0;
   if (pocType === 0) {
-    r.ue();
+    log2MaxPocLsb = r.ue() + 4;
   } else if (pocType === 1) {
     r.bit();
     r.se();
@@ -174,7 +108,18 @@ export function parseSps(nal: Uint8Array): SpsInfo {
     width -= (left + right) * cropX;
     height -= (top + bottom) * cropY;
   }
-  const info: SpsInfo = { profileIdc, constraintFlags, levelIdc, width, height };
+  const info: SpsInfo = {
+    separateColourPlane,
+    log2MaxFrameNum,
+    frameMbsOnly: frameMbsOnly === 1,
+    pocType,
+    log2MaxPocLsb,
+    profileIdc,
+    constraintFlags,
+    levelIdc,
+    width,
+    height,
+  };
   try {
     if (r.bit()) Object.assign(info, readVuiTiming(r));
   } catch {
@@ -214,4 +159,43 @@ export function buildAvcC(sps: Uint8Array[], pps: Uint8Array[]): Uint8Array {
   w.u8(pps.length);
   for (const p of pps) w.u16(p.length).bytes(p);
   return w.toBytes();
+}
+
+/**
+ * Picture order count of successive pictures in decode order (POC type 0;
+ * types 1 and 2 are not handled and yield null). Keys compare across IDRs:
+ * each IDR starts a new epoch, since its POC restarts at 0.
+ */
+export function avcPictureOrder(sps: SpsInfo): ((header: number, rbsp: Uint8Array) => number | null) | null {
+  if (sps.pocType !== 0) return null;
+  const maxLsb = 2 ** sps.log2MaxPocLsb;
+  let epoch = 0;
+  let prevMsb = 0;
+  let prevLsb = 0;
+  return (header, rbsp) => {
+    try {
+      const r = new BitReader(toRbsp(rbsp));
+      r.ue(); // first_mb_in_slice
+      r.ue(); // slice_type
+      r.ue(); // pic_parameter_set_id
+      if (sps.separateColourPlane) r.bits(2);
+      r.bits(sps.log2MaxFrameNum);
+      if (!sps.frameMbsOnly && r.bit()) r.bit(); // field_pic_flag, bottom_field_flag
+      const idr = nalType(header) === NAL_IDR;
+      if (idr) {
+        r.ue(); // idr_pic_id
+        epoch++;
+        prevMsb = 0;
+        prevLsb = 0;
+      }
+      const lsb = r.bits(sps.log2MaxPocLsb);
+      let msb = prevMsb;
+      if (lsb < prevLsb && prevLsb - lsb >= maxLsb / 2) msb += maxLsb;
+      else if (lsb > prevLsb && lsb - prevLsb > maxLsb / 2) msb -= maxLsb;
+      if (header & 0x60) [prevMsb, prevLsb] = [msb, lsb]; // reference pictures carry the POC forward
+      return epoch * 2 ** 32 + msb + lsb;
+    } catch {
+      return null;
+    }
+  };
 }
