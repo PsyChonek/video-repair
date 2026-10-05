@@ -1,5 +1,5 @@
 import { blobReader, cachedReader } from '../src/core/reader.ts';
-import { planRepair, RepairError, type RepairPlan } from '../src/core/repair.ts';
+import { planRepair, RepairError, type RepairMode, type RepairOptions, type RepairPlan } from '../src/core/repair.ts';
 import { detectLocale, MESSAGES, type Locale } from './i18n.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -7,15 +7,26 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const els = {
   file: $<HTMLInputElement>('file'),
   drop: $<HTMLLabelElement>('drop'),
+  options: $<HTMLDetailsElement>('options'),
+  reference: $<HTMLInputElement>('reference'),
+  referenceClear: $<HTMLButtonElement>('reference-clear'),
+  mode: $<HTMLSelectElement>('mode'),
+  fps: $<HTMLInputElement>('fps'),
+  audio: $<HTMLInputElement>('audio'),
+  tail: $<HTMLInputElement>('tail'),
+  sync: $<HTMLInputElement>('sync'),
   progress: $<HTMLDivElement>('progress'),
   stage: $<HTMLSpanElement>('stage'),
   bar: $<HTMLProgressElement>('bar'),
   status: $<HTMLParagraphElement>('status'),
-  error: $<HTMLParagraphElement>('error'),
+  error: $<HTMLDivElement>('error'),
+  errorText: $<HTMLParagraphElement>('error-text'),
+  errorRetry: $<HTMLButtonElement>('error-retry'),
   result: $<HTMLElement>('result'),
   report: $<HTMLDListElement>('report'),
   warnings: $<HTMLUListElement>('warnings'),
   download: $<HTMLAnchorElement>('download'),
+  retry: $<HTMLButtonElement>('retry'),
   another: $<HTMLButtonElement>('another'),
   preview: $<HTMLVideoElement>('preview'),
 };
@@ -24,6 +35,8 @@ const locale: Locale = detectLocale();
 const t = MESSAGES[locale];
 const numbers = new Intl.NumberFormat(locale);
 let outputUrl: string | null = null;
+let currentFile: File | null = null;
+let busy = false;
 
 function applyLocale(): void {
   document.documentElement.lang = locale;
@@ -33,6 +46,7 @@ function applyLocale(): void {
     const value = t[el.dataset.i18n as keyof typeof t];
     if (typeof value === 'string') el.textContent = value;
   }
+  for (const option of els.mode.options) option.textContent = t.modes[option.value as RepairMode];
   $('how').replaceChildren(...t.how.map((text) => Object.assign(document.createElement('p'), { textContent: text })));
   $('faq').replaceChildren(
     ...t.faq.map(([q, a]) => {
@@ -45,6 +59,19 @@ function applyLocale(): void {
   for (const link of document.querySelectorAll<HTMLAnchorElement>('nav a')) {
     if (link.hreflang === locale) link.setAttribute('aria-current', 'true');
   }
+}
+
+function readOptions(): RepairOptions {
+  const fps = Number(els.fps.value);
+  const reference = els.reference.files?.[0];
+  return {
+    mode: els.mode.value as RepairMode,
+    fps: els.fps.value && fps > 0 ? fps : undefined,
+    audio: els.audio.checked,
+    tail: els.tail.checked,
+    syncToAudio: els.sync.checked,
+    reference: reference ? cachedReader(blobReader(reference)) : undefined,
+  };
 }
 
 function formatDuration(seconds: number): string {
@@ -63,7 +90,7 @@ function setStage(stage: keyof typeof t.stage, fraction: number): void {
   els.bar.value = fraction;
 }
 
-function reset(): void {
+function clearOutput(): void {
   if (outputUrl) URL.revokeObjectURL(outputUrl);
   outputUrl = null;
   els.preview.removeAttribute('src');
@@ -71,13 +98,13 @@ function reset(): void {
   els.result.hidden = true;
   els.error.hidden = true;
   els.progress.hidden = true;
-  els.file.value = '';
 }
 
 function showReport(plan: RepairPlan): void {
   const r = plan.report;
   const rows: [string, string][] = [
     [t.labels.method, t.method[r.method]],
+    [t.labels.codec, t.codecs[r.codec]],
     [t.labels.video, `${r.width}×${r.height}, ${numbers.format(Math.round(r.fps * 100) / 100)} fps, ${t.frames(numbers.format(r.videoFrames), numbers.format(r.keyframes))}`],
     [t.labels.audio, r.audioFrames ? t.audioFrames(numbers.format(r.audioFrames)) : t.noAudio],
     [t.labels.duration, formatDuration(r.durationSeconds)],
@@ -92,11 +119,14 @@ function showReport(plan: RepairPlan): void {
 }
 
 async function repair(file: File): Promise<void> {
-  reset();
+  if (busy) return;
+  busy = true;
+  currentFile = file;
+  clearOutput();
   els.progress.hidden = false;
   setStage('index', 0);
   try {
-    const plan = await planRepair(cachedReader(blobReader(file)), { onProgress: setStage });
+    const plan = await planRepair(cachedReader(blobReader(file)), { ...readOptions(), onProgress: setStage });
     setStage('write', 1);
     // A Blob made of the header and a slice of the original File is assembled
     // lazily by the browser, so even multi-GB outputs cost no extra memory.
@@ -112,10 +142,22 @@ async function repair(file: File): Promise<void> {
     els.result.focus();
   } catch (err) {
     els.progress.hidden = true;
-    els.error.textContent = err instanceof RepairError ? t.errors[err.code] : t.errors.unknown;
+    els.errorText.textContent = err instanceof RepairError ? t.errors[err.code] : t.errors.unknown;
     els.error.hidden = false;
-    if (!(err instanceof RepairError)) console.error(err);
+    if (err instanceof RepairError && (err.code === 'no-codec-config' || err.code === 'bad-reference')) {
+      // The fix is in the options panel: open it and put the reference picker in focus.
+      els.options.open = true;
+      els.reference.focus();
+    } else if (!(err instanceof RepairError)) {
+      console.error(err);
+    }
+  } finally {
+    busy = false;
   }
+}
+
+function retry(): void {
+  if (currentFile) void repair(currentFile);
 }
 
 applyLocale();
@@ -134,7 +176,19 @@ els.drop.addEventListener('drop', (e) => {
   const file = e.dataTransfer?.files[0];
   if (file) void repair(file);
 });
+els.reference.addEventListener('change', () => {
+  els.referenceClear.hidden = !els.reference.files?.length;
+});
+els.referenceClear.addEventListener('click', () => {
+  els.reference.value = '';
+  els.referenceClear.hidden = true;
+  els.reference.focus();
+});
+els.retry.addEventListener('click', retry);
+els.errorRetry.addEventListener('click', retry);
 els.another.addEventListener('click', () => {
-  reset();
+  clearOutput();
+  currentFile = null;
+  els.file.value = '';
   els.file.focus();
 });
