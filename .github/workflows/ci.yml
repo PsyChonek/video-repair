@@ -23,8 +23,10 @@ jobs:
       - uses: ./.github/actions/setup
 
       # A malformed workflow produces a run with no jobs; catch it on the PR.
+      # Pinned by digest (1.7.12) and mounted read-only: the image cannot change
+      # under us or write into the checkout.
       - name: Lint workflows
-        run: docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12
+        run: docker run --rm -v "$PWD":/repo:ro -w /repo rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
 
       - run: npm run check
       - run: npm run build
