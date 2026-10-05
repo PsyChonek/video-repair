@@ -101,7 +101,10 @@ if (skipChecks) {
 writeFileSync(manifestPath, manifest.replace(versionField, `$1"${next}"`))
 
 run('git', ['add', '-A'])
-run('git', ['commit', '-m', `chore(release): ${tag}`])
+// The manifest may already carry this version (first release); an empty
+// commit would fail, so tag HEAD as it is.
+if (spawnSync('git', ['diff', '--cached', '--quiet']).status === 0) console.log(`package.json already at ${next} - tagging HEAD`)
+else run('git', ['commit', '-m', `chore(release): ${tag}`])
 run('git', ['tag', '-a', tag, '-m', tag])
 
 const sha = git('rev-parse', '--short', 'HEAD')
