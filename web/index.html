@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Oprava poškozeného MP4 z autokamery zdarma | video-repair</title>
+    <meta
+      name="description"
+      content="Opravte zdarma MP4 video z autokamery, které se nepřehraje po výpadku napájení. Oprava běží přímo v prohlížeči, soubor nikam neodesíláme."
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Oprava poškozeného MP4 z autokamery zdarma" />
+    <meta
+      property="og:description"
+      content="Oprava videa po výpadku napájení přímo v prohlížeči. Zdarma, bez nahrávání na server."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='8' width='20' height='16' rx='3' fill='%232563eb'/%3E%3Cpath d='M23 13l6-3v12l-6-3z' fill='%232563eb'/%3E%3C/svg%3E" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "video-repair",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Any (web browser)",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+        "description": "Free in-browser repair of dashcam MP4 recordings that were cut off by a power loss."
+      }
+    </script>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main" data-i18n="skip">Přeskočit na obsah</a>
+    <header class="top">
+      <span class="brand">video-repair</span>
+      <nav aria-label="Language">
+        <a href="?lang=cs" hreflang="cs" lang="cs">CS</a>
+        <a href="?lang=en" hreflang="en" lang="en">EN</a>
+        <a href="?lang=sk" hreflang="sk" lang="sk">SK</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <h1 data-i18n="h1">Oprava poškozeného MP4 videa z autokamery</h1>
+      <p class="lead" data-i18n="lead">
+        Kamera přišla o napájení a video nejde přehrát? Chybí mu jen index. Ten obnovíme přímo ve vašem prohlížeči, zdarma a bez
+        přepočítání obrazu.
+      </p>
+
+      <section class="tool" aria-labelledby="pick-label">
+        <label class="drop" id="drop">
+          <input id="file" type="file" accept="video/mp4,video/quicktime,.mp4,.mov" class="visually-hidden" />
+          <span class="drop-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 15V4m0 0L8 8m4-4l4 4" />
+              <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3" />
+            </svg>
+          </span>
+          <span class="drop-title" id="pick-label" data-i18n="pick">Vyberte nebo přetáhněte soubor MP4</span>
+          <span class="drop-hint" data-i18n="pickHint">Funguje i se soubory o velikosti několika GB.</span>
+        </label>
+        <p class="privacy" data-i18n="privacy">Soubor nikam neodesíláme. Celá oprava probíhá ve vašem zařízení.</p>
+
+        <div class="progress" id="progress" hidden>
+          <span id="stage"></span>
+          <progress id="bar" max="1" value="0"></progress>
+        </div>
+        <p class="sr-status visually-hidden" id="status" role="status" aria-live="polite"></p>
+        <p class="error" id="error" role="alert" hidden></p>
+
+        <section class="result" id="result" hidden tabindex="-1" aria-labelledby="result-title">
+          <h2 id="result-title" data-i18n="resultTitle">Video je opravené</h2>
+          <dl class="report" id="report"></dl>
+          <ul class="warnings" id="warnings"></ul>
+          <div class="actions">
+            <a class="button primary" id="download" href="#" data-i18n="download">Stáhnout opravené video</a>
+            <button class="button" id="another" type="button" data-i18n="another">Opravit další soubor</button>
+          </div>
+          <video id="preview" controls preload="metadata" playsinline></video>
+        </section>
+      </section>
+
+      <section class="info" aria-labelledby="how-title">
+        <h2 id="how-title" data-i18n="howTitle">Jak to funguje</h2>
+        <div id="how">
+          <p>
+            MP4 soubor ukládá obraz a zvuk průběžně, ale index (atom moov) zapisuje až na konci nahrávání. Když kamera přijde o napájení,
+            index chybí a přehrávač soubor odmítne.
+          </p>
+          <p>
+            Většina autokamer s čipem Novatek (LAMAX, Viofo, 70mai, Garmin a další) zapisuje každou sekundu malý pomocný index. Z něj
+            sestavíme přesný nový index včetně zvuku.
+          </p>
+          <p>Data obrazu nepřepočítáváme, opravené video je bit po bitu stejné jako to, co kamera nahrála.</p>
+        </div>
+      </section>
+
+      <section class="info" aria-labelledby="faq-title">
+        <h2 id="faq-title" data-i18n="faqTitle">Časté dotazy</h2>
+        <div id="faq">
+          <details>
+            <summary>Je to opravdu zdarma?</summary>
+            <p>Ano. Bez registrace, bez vodoznaku, bez limitu velikosti.</p>
+          </details>
+          <details>
+            <summary>Nahrávám video na server?</summary>
+            <p>Ne. Oprava probíhá v prohlížeči a soubor neopustí váš počítač ani telefon.</p>
+          </details>
+          <details>
+            <summary>Které kamery jsou podporované?</summary>
+            <p>Kamery s kodekem H.264, nejlépe s čipem Novatek. Ostatní obnovíme bez zvuku. H.265 zatím ne.</p>
+          </details>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot"><p data-i18n="footer">video-repair, svobodný software pro opravu videí z autokamer.</p></footer>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -143,3 +143,12 @@ test('falls back to a video-only scan when there is no camera index', async () =
   assert.deepEqual(sizes, expected.map((v) => v.size));
   expected.forEach((v, i) => assert.deepEqual(out.subarray(offsets[i]!, offsets[i]! + v.size), fx.data.subarray(v.offset, v.offset + v.size)));
 });
+
+test('cachedReader returns the same bytes as the underlying reader', async () => {
+  const { cachedReader } = await import('../src/core/reader.ts');
+  const data = Uint8Array.from({ length: 10_000 }, (_, i) => (i * 31) & 0xff);
+  const cached = cachedReader(memoryReader(data), 256, 2);
+  for (const [offset, length] of [[0, 5], [250, 20], [255, 2], [9_990, 50], [1_000, 600], [512, 256]] as const) {
+    assert.deepEqual(await cached.read(offset, length), data.subarray(offset, Math.min(offset + length, data.length)));
+  }
+});
