@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    # Public repo: GitHub-hosted only. A self-hosted runner here would run
+    # code from any fork's pull request.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # A malformed workflow produces a run with no jobs; catch it on the PR.
+      - name: Lint workflows
+        run: docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12
+
+      - run: npm run check
+      - run: npm run build

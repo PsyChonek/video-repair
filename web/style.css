@@ -366,3 +366,6 @@ video {
 [hidden] {
   display: none !important;
 }
+.foot a {
+  color: var(--accent);
+}

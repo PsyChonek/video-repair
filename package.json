@@ -1,7 +1,7 @@
 {
   "name": "video-repair",
   "version": "0.1.0",
-  "description": "Free repair tool for truncated dashcam MP4 recordings (missing moov atom)",
+  "description": "Free repair for MP4 recordings cut off before they were finalized (dashcams, phones): rebuilds the missing moov, H.264 and H.265",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -16,11 +16,19 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "deploy:patch": "node scripts/release.mjs patch",
+    "deploy:minor": "node scripts/release.mjs minor",
+    "deploy:major": "node scripts/release.mjs major"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.3.6"
+  },
+  "homepage": "https://psychonek.github.io/video-repair/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PsyChonek/video-repair.git"
   }
 }
